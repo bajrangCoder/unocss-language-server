@@ -9,15 +9,10 @@ A language server for unocss
 * Simple completion
 * Hover
 * Loading config from `root dir`
+* color
 
 ## Install
 
 ```sh
-npm i unocss-language-server -g
+npm i @bajrangcoder/unocss-language-server -g
 ```
-
-## Related information
-
-* [Language Server Extension Guide](https://code.visualstudio.com/api/language-extensions/language-server-extension-guide)
-* [Language Server Protocol Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/)
-* [Lsp - Neovim docs](https://neovim.io/doc/user/lsp.html)
