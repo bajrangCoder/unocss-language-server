@@ -75,7 +75,7 @@ connection.onInitialize((params: InitializeParams) => {
     rootDir = params.rootUri;
   }
 
-  if (!rootDir) {
+  if (rootDir) {
     resolveConfig(rootDir);
   }
 
