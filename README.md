@@ -1,6 +1,6 @@
 # UnoCSS Language Server
 
-> This project is a fork and enhancement of the original UnoCSS Language Server found at https://github.com/xna00/unocss-language-server
+> This project is a fork and enhancement of the original UnoCSS Language Server found at https://github.com/xna00/unocss-language-server and used in zed unocss extension.
 
 A language server for unocss
 
