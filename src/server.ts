@@ -1,28 +1,28 @@
-import {
-  type InitializeParams,
-  type CompletionItem,
-  type TextDocumentPositionParams,
-  type InitializeResult,
-  type Hover,
-  createConnection,
-  TextDocuments,
-  ProposedFeatures,
-  CompletionItemKind,
-  TextDocumentSyncKind,
-  Range,
-  MarkupKind,
-} from "vscode-languageserver/node.js";
+import type { SuggestResult } from "@unocss/core";
 import beautify from "js-beautify";
-import { getColorString } from "./utils.js";
+import {
+  type CompletionItem,
+  CompletionItemKind,
+  createConnection,
+  type Hover,
+  type InitializeParams,
+  type InitializeResult,
+  MarkupKind,
+  ProposedFeatures,
+  Range,
+  type TextDocumentPositionParams,
+  TextDocumentSyncKind,
+  TextDocuments,
+} from "vscode-languageserver/node.js";
 import { TextDocument } from "vscode-languageserver-textdocument";
 import {
   documentColor,
   getComplete,
+  resolveConfig,
   resolveCSS,
   resolveCSSByOffset,
-  resolveConfig,
 } from "./service.js";
-import type { SuggestResult } from "@unocss/core";
+import { getColorString } from "./utils.js";
 
 const connection = createConnection(ProposedFeatures.all);
 
