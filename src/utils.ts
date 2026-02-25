@@ -1,12 +1,13 @@
 import path from "node:path";
 import type { UnoGenerator } from "@unocss/core";
-import { toArray } from "@unocss/core";
+import { cssIdRE, toArray } from "@unocss/core";
 import rgba from "color-rgba";
 
 const remUnitRE = /(-?[\d.]+)rem(\s+!important)?;/;
 const matchCssVarNameRE =
   /var\((?<cssVarName>--[^,|)]+)(?:,(?<fallback>[^)]+))?\)/g;
-const cssColorRE = /(?:#|0x)(?:[a-f0-9]{3}|[a-f0-9]{6})\b|(?:rgb|hsl)a?\(.*\)/g;
+const cssColorRE =
+  /(?:#|0x)(?:[a-f0-9]{3}|[a-f0-9]{6})\b|(?:rgb|rgba|hsl|hsla|oklch)\(.*\)/g;
 const varFnRE = /var\((--[^,|)]+)(?:,([^)]+))?\)/;
 
 export function throttle<T extends (...args: unknown[]) => unknown>(
@@ -193,7 +194,6 @@ export function isRejected(
 }
 
 export function convertToRGBA(rgbColor: string) {
-  console.log("rgbColor:", rgbColor);
   const match = rgba(rgbColor);
 
   if (match?.length === 4) {
@@ -207,4 +207,47 @@ export function convertToRGBA(rgbColor: string) {
   }
 
   return;
+}
+
+const styleTagsRe = /<style[^>]*>[\s\S]*?(?:<\/style>|<\/>)/g;
+const pugTemplateRe = /<template.*?lang=['"]pug['"][^>]*>/i;
+
+export function shouldProvideAutocomplete(
+  code: string,
+  id: string,
+  offset: number,
+) {
+  const isSfcLike = id.match(/\.(svelte|vue|astro|marko)$/);
+
+  const isPugVue = isSfcLike && isVueWithPug(code, id);
+  if (isPugVue) {
+    const codeBeforeCursor = code.slice(0, offset);
+    if (/\.$/.test(codeBeforeCursor) || /\.\S+$/.test(codeBeforeCursor)) {
+      return true;
+    }
+  }
+
+  const isInStyleTag = isSfcLike
+    ? [...code.matchAll(styleTagsRe)]
+        .map((v) => [v.index, v.index + v[0].length] as const)
+        .some(([start, end]) => offset > start && offset < end)
+    : true;
+
+  if (isInStyleTag) return true;
+
+  const codeStripStrings = code
+    .slice(offset)
+    .replace(/"[^"]*"|\{[^}]*\}|'[^']*'/g, "");
+
+  const isInStartTag = /^[^<>]*>/.test(codeStripStrings);
+
+  return isInStartTag;
+}
+
+export function isVueWithPug(code: string, id: string): boolean {
+  return id.endsWith(".vue") && pugTemplateRe.test(code);
+}
+
+export function isCssId(id: string) {
+  return cssIdRE.test(id);
 }

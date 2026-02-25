@@ -128,7 +128,18 @@ export function getMatchedPositions(
   const plain = new Set<string>();
 
   const includeRanges: [number, number][] = [];
-  const excludeRanges: [number, number][] = [];
+
+  if (options.excludeRegex) {
+    for (const regex of options.excludeRegex) {
+      for (const match of code.matchAll(regex)) {
+        const content = match[0];
+        code =
+          code.slice(0, match.index) +
+          " ".repeat(content.length) +
+          code.slice(match.index + content.length);
+      }
+    }
+  }
 
   if (options.includeRegex) {
     for (const regex of options.includeRegex) {
@@ -137,13 +148,6 @@ export function getMatchedPositions(
     }
   } else {
     includeRanges.push([0, code.length]);
-  }
-
-  if (options.excludeRegex) {
-    for (const regex of options.excludeRegex) {
-      for (const match of code.matchAll(regex))
-        excludeRanges.push([match.index!, match.index! + match[0].length]);
-    }
   }
 
   Array.from(matched).forEach((v) => {
@@ -227,7 +231,6 @@ export function getMatchedPositions(
 
   return result
     .filter(([start, end]) => {
-      if (excludeRanges.some(([s, e]) => start >= s && end <= e)) return false;
       if (includeRanges.some(([s, e]) => start >= s && end <= e)) return true;
       return false;
     })

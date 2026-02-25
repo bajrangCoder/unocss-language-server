@@ -16,3 +16,10 @@ A language server for unocss
 ```sh
 npm i @bajrangcoder/unocss-language-server -g
 ```
+
+## Development
+
+```sh
+bun install
+bun run compile
+```

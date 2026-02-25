@@ -14,6 +14,31 @@ import {
 } from 'vscode-languageclient/node';
 
 let client: LanguageClient;
+const languageIds = [
+	'erb',
+	'haml',
+	'hbs',
+	'html',
+	'css',
+	'postcss',
+	'javascript',
+	'javascriptreact',
+	'markdown',
+	'ejs',
+	'php',
+	'svelte',
+	'typescript',
+	'typescriptreact',
+	'vue-html',
+	'vue',
+	'sass',
+	'scss',
+	'less',
+	'stylus',
+	'astro',
+	'rust',
+	'marko'
+];
 
 export function activate(context: ExtensionContext) {
 	// The server is implemented in node
@@ -37,18 +62,16 @@ export function activate(context: ExtensionContext) {
 
 	// Options to control the language client
 	const clientOptions: LanguageClientOptions = {
-		// Register the server for plain text documents
-		documentSelector: [{ scheme: 'file', language: 'plaintext' }],
+		documentSelector: languageIds.map(language => ({ scheme: 'file', language })),
 		synchronize: {
-			// Notify the server about file changes to '.clientrc files contained in the workspace
-			fileEvents: workspace.createFileSystemWatcher('**/.clientrc')
+			configurationSection: 'unocss',
+			fileEvents: workspace.createFileSystemWatcher('**/{uno,unocss}.config.{js,cjs,mjs,ts,cts,mts}')
 		}
 	};
 
-	// Create the language client and start the client.
 	client = new LanguageClient(
-		'languageServerExample',
-		'Language Server Example',
+		'unocss-language-server',
+		'UnoCSS Language Server',
 		serverOptions,
 		clientOptions
 	);

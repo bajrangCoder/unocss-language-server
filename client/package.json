@@ -5,47 +5,133 @@
 	"license": "MIT",
 	"version": "0.0.1",
 	"publisher": "vscode",
+	"packageManager": "bun@1.3.1",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/Microsoft/vscode-extension-samples"
 	},
 	"engines": {
-		"vscode": "^1.63.0"
+		"vscode": "^1.96.0"
 	},
 	"activationEvents": [
-		"onLanguage:plaintext"
+		"onStartupFinished"
 	],
 	"main": "./out/extension",
+	"scripts": {
+		"build": "tsc"
+	},
 	"contributes": {
 		"configuration": {
 			"type": "object",
-			"title": "Example configuration",
+			"title": "UnoCSS",
 			"properties": {
-				"languageServerExample.maxNumberOfProblems": {
-					"scope": "resource",
-					"type": "number",
-					"default": 100,
-					"description": "Controls the maximum number of problems produced by the server."
+				"unocss.disable": {
+					"type": "boolean",
+					"default": false,
+					"description": "Disable the UnoCSS extension"
 				},
-				"languageServerExample.trace.server": {
-					"scope": "window",
-					"type": "string",
-					"enum": [
-						"off",
-						"messages",
-						"verbose"
+				"unocss.languageIds": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				},
+				"unocss.root": {
+					"type": [
+						"array",
+						"string"
 					],
-					"default": "off",
-					"description": "Traces the communication between VS Code and the language server."
+					"items": {
+						"type": "string"
+					},
+					"description": "Project root that contains the UnoCSS configuration file"
+				},
+				"unocss.include": {
+					"type": [
+						"array",
+						"string"
+					],
+					"items": {
+						"type": "string"
+					},
+					"description": "Directory of files to be detected"
+				},
+				"unocss.exclude": {
+					"type": [
+						"array",
+						"string"
+					],
+					"items": {
+						"type": "string"
+					},
+					"description": "Directory of files not to be detected"
+				},
+				"unocss.underline": {
+					"type": "boolean",
+					"default": true,
+					"scope": "language-overridable",
+					"description": "Enable/disable underline decoration for class names"
+				},
+				"unocss.colorPreview": {
+					"type": "boolean",
+					"default": true,
+					"scope": "language-overridable",
+					"description": "Enable/disable color preview decorations"
+				},
+				"unocss.colorPreviewRadius": {
+					"type": "string",
+					"default": "50%",
+					"description": "Radius for color preview"
+				},
+				"unocss.remToPxPreview": {
+					"type": "boolean",
+					"default": true,
+					"scope": "language-overridable",
+					"description": "Enable/disable rem to px preview in hover/completion"
+				},
+				"unocss.remToPxRatio": {
+					"type": "number",
+					"default": 16,
+					"scope": "language-overridable",
+					"description": "Ratio of rem to px"
+				},
+				"unocss.selectionStyle": {
+					"type": "boolean",
+					"default": true,
+					"description": "Enable/disable selection style decorations"
+				},
+				"unocss.strictAnnotationMatch": {
+					"type": "boolean",
+					"default": false,
+					"description": "Be strict about where to show annotations"
+				},
+				"unocss.autocomplete.matchType": {
+					"type": "string",
+					"default": "prefix",
+					"enum": [
+						"prefix",
+						"fuzzy"
+					],
+					"description": "The matching type for autocomplete"
+				},
+				"unocss.autocomplete.strict": {
+					"type": "boolean",
+					"default": false,
+					"description": "Be strict about where to show autocomplete"
+				},
+				"unocss.autocomplete.maxItems": {
+					"type": "number",
+					"default": 1000,
+					"description": "The maximum number of items to show in autocomplete"
 				}
 			}
 		}
 	},
 	"dependencies": {
-		"vscode-languageclient": "^7.0.0"
+		"vscode-languageclient": "^9.0.1"
 	},
 	"devDependencies": {
-		"@types/vscode": "^1.63.0",
-		"@vscode/test-electron": "^2.1.2"
+		"@types/vscode": "^1.109.0",
+		"@vscode/test-electron": "^2.5.2"
 	}
 }
