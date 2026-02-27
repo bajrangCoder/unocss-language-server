@@ -25,10 +25,11 @@ jobs:
       - name: Install Dependencies
         run: bun i
 
-      - name: PNPM build
+      - name: Build
         run: bun run build
 
       - name: Publish to NPM
-        run: bun publish --access public --no-git-checks
+        run: bun publish --access public --no-git-checks --token "$NPM_TOKEN"
         env:
-          NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
