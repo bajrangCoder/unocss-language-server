@@ -134,6 +134,25 @@ function getWorkspaceRootPath(fallbackPath: string) {
   return workspaceRoot ? uriToPath(workspaceRoot) : path.dirname(fallbackPath);
 }
 
+function getTokenAtOffset(code: string, offset: number) {
+  if (offset < 0 || offset > code.length) return null;
+
+  const isBoundary = (char: string) => /[\s"'`<>=(){}]/.test(char);
+
+  let start = offset;
+  while (start > 0 && !isBoundary(code[start - 1]))
+    start--;
+
+  let end = offset;
+  while (end < code.length && !isBoundary(code[end]))
+    end++;
+
+  const token = code.slice(start, end).trim();
+  if (!token) return null;
+
+  return { token, start, end };
+}
+
 function isReferenceCandidateFile(filePath: string) {
   return workspaceFileExtensions.has(path.extname(filePath).toLowerCase());
 }
@@ -365,13 +384,31 @@ connection.onHover(async (params): Promise<Hover | null> => {
 
   if (matched) {
     const token = getTokenForUtility(matched[2]);
+    const markdown = await resolvePrettiedMarkdownByToken(token, ratio);
+    if (!markdown) return null;
+
     return {
-      contents: await resolvePrettiedMarkdownByToken(token, ratio),
+      contents: markdown,
       range: {
         start: doc.positionAt(matched[0]),
         end: doc.positionAt(matched[1]),
       },
     };
+  }
+
+  const tokenAtCursor = getTokenAtOffset(content, cursor);
+  if (tokenAtCursor) {
+    const token = getTokenForUtility(tokenAtCursor.token);
+    const markdown = await resolvePrettiedMarkdownByToken(token, ratio);
+    if (markdown) {
+      return {
+        contents: markdown,
+        range: {
+          start: doc.positionAt(tokenAtCursor.start),
+          end: doc.positionAt(tokenAtCursor.end),
+        },
+      };
+    }
   }
 
   const markdown = await resolvePrettiedMarkdownByOffset(content, cursor, ratio);
