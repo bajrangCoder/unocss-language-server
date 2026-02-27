@@ -2,6 +2,7 @@ import path from "node:path";
 import type { UnoGenerator } from "@unocss/core";
 import { cssIdRE, toArray } from "@unocss/core";
 import rgba from "color-rgba";
+import beautify from "js-beautify";
 
 const remUnitRE = /(-?[\d.]+)rem(\s+!important)?;/;
 const matchCssVarNameRE =
@@ -71,7 +72,7 @@ export async function getPrettiedCSS(
     safelist: false,
   });
   const css = addRemToPxComment(result.css, remToPxRatio);
-  const prettified = css;
+  const prettified = css.trim() ? beautify.css(css) : "";
 
   return {
     ...result,
@@ -84,7 +85,9 @@ export async function getPrettiedMarkdown(
   util: string | string[],
   remToPxRatio: number,
 ) {
-  return `\`\`\`css\n${(await getPrettiedCSS(uno, util, remToPxRatio)).prettified}\n\`\`\``;
+  const prettified = (await getPrettiedCSS(uno, util, remToPxRatio)).prettified;
+  if (!prettified.trim()) return "";
+  return `\`\`\`css\n${prettified.trimEnd()}\n\`\`\``;
 }
 
 function getCssVariables(code: string) {
