@@ -1,7 +1,8 @@
 import { createGenerator } from "@unocss/core";
+import presetAttributify from "@unocss/preset-attributify";
 import presetWind3 from "@unocss/preset-wind3";
 import { describe, expect, it } from "bun:test";
-import { getPrettiedMarkdown } from "../src/utils";
+import { getAttributifyCandidates, getPrettiedMarkdown } from "../src/utils";
 
 describe("hover preview formatting", () => {
   it("formats generated css blocks (not inline)", async () => {
@@ -34,5 +35,18 @@ describe("hover preview formatting", () => {
     expect(markdown).toContain("```css");
     expect(markdown.length).toBeGreaterThan(12);
     expect(markdown).toContain("background-color");
+  });
+
+  it("generates hover markdown for attributify selector tokens", async () => {
+    const uno = await createGenerator(
+      {},
+      { presets: [presetWind3(), presetAttributify()] },
+    );
+    const token = getAttributifyCandidates(`[bg="dark:hover:blue-600"]`)!;
+    const markdown = await getPrettiedMarkdown(uno, token, 16);
+
+    expect(markdown).toContain("```css");
+    expect(markdown).toContain("background-color");
+    expect(markdown).toContain("dark");
   });
 });

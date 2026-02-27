@@ -61,6 +61,28 @@ describe("parity: directives + attributify", () => {
     expect(positions.some(([, , text]) => text === "text-green-500")).toBeTrue();
   });
 
+  it("skips non-transformer entries in transformer list without crashing", async () => {
+    const uno = await createGenerator(
+      {
+        transformers: [
+          {
+            name: "@custom/no-transform",
+            // Intentionally no transform() function.
+          } as any,
+        ],
+      },
+      { presets: [presetWind3()] },
+    );
+
+    const positions = await getMatchedPositionsFromCode(
+      uno,
+      `<div class="text-green-500"></div>`,
+      "index.html",
+    );
+
+    expect(positions.some(([, , text]) => text === "text-green-500")).toBeTrue();
+  });
+
   it("matches attributify utilities consistently", async () => {
     const uno = await createGenerator(
       {},

@@ -2,7 +2,8 @@ import path from "node:path";
 import type { UnoGenerator } from "@unocss/core";
 import { cssIdRE, toArray } from "@unocss/core";
 import rgba from "color-rgba";
-import beautify from "js-beautify";
+import * as prettier from "prettier/standalone";
+import * as prettierPluginPostcss from "prettier/plugins/postcss";
 
 const remUnitRE = /(-?[\d.]+)rem(\s+!important)?;/;
 const matchCssVarNameRE =
@@ -72,11 +73,16 @@ export async function getPrettiedCSS(
     safelist: false,
   });
   const css = addRemToPxComment(result.css, remToPxRatio);
-  const prettified = css.trim() ? beautify.css(css) : "";
+  const prettified = css.trim()
+    ? await prettier.format(css, {
+        parser: "css",
+        plugins: [prettierPluginPostcss],
+      })
+    : "";
 
   return {
     ...result,
-    prettified,
+    prettified: prettified.trim(),
   };
 }
 
@@ -214,6 +220,7 @@ export function convertToRGBA(rgbColor: string) {
 
 const styleTagsRe = /<style[^>]*>[\s\S]*?(?:<\/style>|<\/>)/g;
 const pugTemplateRe = /<template.*?lang=['"]pug['"][^>]*>/i;
+const attributifySelectorRE = /^\[(?<name>[^~=\]]+)(?:~)?="(?<value>.*)"\]$/;
 
 export function shouldProvideAutocomplete(
   code: string,
@@ -253,4 +260,31 @@ export function isVueWithPug(code: string, id: string): boolean {
 
 export function isCssId(id: string) {
   return cssIdRE.test(id);
+}
+
+export function getAttributifyCandidates(token: string) {
+  const match = token.match(attributifySelectorRE);
+  const name = match?.groups?.name;
+  const value = match?.groups?.value;
+  if (!name || !value)
+    return null;
+
+  const parts = value.split(":");
+  const base = parts[parts.length - 1];
+  const variants = parts.slice(0, -1).join(":");
+
+  const prefixed = `${name}-${value}`;
+  const variantPrefixed = variants
+    ? `${variants}:${name}-${base}`
+    : prefixed;
+
+  return Array.from(
+    new Set([
+      variantPrefixed,
+      prefixed,
+      token,
+      `[${name}~="${value}"]`,
+      value,
+    ]),
+  );
 }

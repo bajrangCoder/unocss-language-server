@@ -65,7 +65,7 @@ export function activate(context: ExtensionContext) {
 		documentSelector: languageIds.map(language => ({ scheme: 'file', language })),
 		synchronize: {
 			configurationSection: 'unocss',
-			fileEvents: workspace.createFileSystemWatcher('**/{uno,unocss}.config.{js,cjs,mjs,ts,cts,mts}')
+			fileEvents: workspace.createFileSystemWatcher('**/{uno,unocss,vite,svelte,astro,iles,nuxt}.config.{js,cjs,mjs,ts,cts,mts}')
 		}
 	};
 

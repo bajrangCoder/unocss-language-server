@@ -261,6 +261,9 @@ export async function getMatchedPositionsFromCode(
     for (const i of transformers?.filter(
       (i) => (i.enforce ?? "default") === enforce,
     ) || []) {
+      if (typeof i.transform !== "function")
+        continue;
+
       const result = await i.transform(s, id, ctx);
       // @ts-ignore
       const _annotations = result?.highlightAnnotations;

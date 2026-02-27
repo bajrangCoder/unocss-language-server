@@ -41,11 +41,15 @@ export async function resolveConfig(rootDir: string) {
 
   if (result?.config) {
     await generator.setConfig(result.config, defaultConfig);
-    autocomplete = createAutocomplete(generator, {
-      matchType: autocompleteMatchType,
-      throwErrors: false,
-    });
+  } else {
+    // Prevent stale workspace config (e.g. shortcuts) from leaking into new roots.
+    await generator.setConfig({}, defaultConfig);
   }
+
+  autocomplete = createAutocomplete(generator, {
+    matchType: autocompleteMatchType,
+    throwErrors: false,
+  });
 
   return generator.config;
 }

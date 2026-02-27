@@ -1,7 +1,8 @@
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import type { SuggestResult } from "@unocss/core";
+import { searchAttrKey, searchUsageBoundary } from "@unocss/autocomplete";
+import type { SuggestResult, UnoGenerator } from "@unocss/core";
 import {
   type CompletionItem,
   CompletionItemKind,
@@ -19,19 +20,19 @@ import {
 } from "vscode-languageserver/node.js";
 import { TextDocument } from "vscode-languageserver-textdocument";
 import {
-  documentColor,
-  getComplete,
-  getGeneratorCache,
-  getMatchedPositions,
-  hasAttributifyPreset,
-  resolveConfig,
-  resolvePrettiedCSSByToken,
-  resolvePrettiedMarkdownByOffset,
-  resolvePrettiedMarkdownByToken,
-  resolveCSSByToken,
-  setAutocompleteMatchType,
-} from "./service.js";
-import { getColorString, shouldProvideAutocomplete } from "./utils.js";
+  clearAllCache,
+  clearDocumentCache,
+  getMatchedPositionsFromDoc,
+} from "./cache.js";
+import { ContextManager, type UnoContext } from "./context.js";
+import {
+  getAttributifyCandidates,
+  getColorString,
+  getPrettiedCSS,
+  getPrettiedMarkdown,
+  shouldProvideAutocomplete,
+  throttle,
+} from "./utils.js";
 
 interface ServerSettings {
   colorPreview: boolean;
@@ -53,18 +54,6 @@ const defaultSettings: ServerSettings = {
   autocompleteMaxItems: 1000,
 };
 
-const SKIP_START_COMMENT = "@unocss-skip-start";
-const SKIP_END_COMMENT = "@unocss-skip-end";
-const SKIP_COMMENT_RE = new RegExp(
-  `(//\\s*?${SKIP_START_COMMENT}\\s*?|\\/\\*\\s*?${SKIP_START_COMMENT}\\s*?\\*\\/|<!--\\s*?${SKIP_START_COMMENT}\\s*?-->)[\\s\\S]*?(//\\s*?${SKIP_END_COMMENT}\\s*?|\\/\\*\\s*?${SKIP_END_COMMENT}\\s*?\\*\\/|<!--\\s*?${SKIP_END_COMMENT}\\s*?-->)`,
-  "g",
-);
-const defaultIdeMatchInclude: RegExp[] = [
-  /(['"`])[^\x01]*?\1/g,
-  /<[^/?<>0-9$_!"'](?:"[^"]*"|'[^']*'|[^>])+>/g,
-  /(@apply|--uno|--at-apply)[^;]*;/g,
-];
-const defaultIdeMatchExclude: RegExp[] = [SKIP_COMMENT_RE];
 const workspaceFileExtensions = new Set([
   ".vue",
   ".html",
@@ -99,12 +88,43 @@ const excludedDirs = new Set([
   ".nuxt",
 ]);
 const maxWorkspaceReferenceFiles = 3000;
+const completionTriggerCharacters = [
+  "-",
+  ":",
+  " ",
+  '"',
+  "'",
+  "=",
+  ".",
+  "/",
+  "!",
+  "[",
+  "]",
+  "(",
+  ")",
+  ...("abcdefghijklmnopqrstuvwxyz0123456789".split("")),
+];
+const configFileRE = new RegExp(
+  String.raw`(?:^|[\\/])(?:uno|unocss|vite|svelte|astro|iles|nuxt)\.config\.(?:[cm]?[jt]s)$`,
+);
 
 const connection = createConnection(ProposedFeatures.all);
 const documents: TextDocuments<TextDocument> = new TextDocuments(TextDocument);
 
 let settings: ServerSettings = { ...defaultSettings };
 let workspaceRoot = "";
+let contextManager: ContextManager | undefined;
+
+const throttledReloadConfig = throttle(async () => {
+  if (!contextManager) return;
+  try {
+    clearAllCache();
+    await contextManager.reload();
+    connection.console.log("unocss: config reloaded");
+  } catch (error: unknown) {
+    connection.console.error(`unocss: failed to reload config ${String(error)}`);
+  }
+}, 300);
 
 function uriToPath(uri: string) {
   try {
@@ -114,20 +134,24 @@ function uriToPath(uri: string) {
   }
 }
 
-function getMatchedOptions() {
-  if (!settings.strictAnnotationMatch) return undefined;
-  return {
-    includeRegex: defaultIdeMatchInclude,
-    excludeRegex: defaultIdeMatchExclude,
-  };
-}
-
 function getRemToPxRatio() {
   return settings.remToPxPreview ? settings.remToPxRatio : -1;
 }
 
-function getTokenForUtility(value: string) {
-  return hasAttributifyPreset() ? [value, `[${value}=""]`] : value;
+function hasAttributifyPreset(context: UnoContext) {
+  return context.generator.config.presets.some(
+    (preset) => preset.name === "@unocss/preset-attributify",
+  );
+}
+
+function getTokenForUtility(context: UnoContext, value: string) {
+  if (!hasAttributifyPreset(context))
+    return value;
+
+  // Expand only true attributify selector tokens (e.g. [bg="blue-400"]).
+  // Plain class tokens like "flex" should keep class-only preview.
+  const attributifyCandidates = getAttributifyCandidates(value);
+  return attributifyCandidates || value;
 }
 
 function getWorkspaceRootPath(fallbackPath: string) {
@@ -151,6 +175,66 @@ function getTokenAtOffset(code: string, offset: number) {
   if (!token) return null;
 
   return { token, start, end };
+}
+
+function buildTokenCompletionItems(
+  context: UnoContext,
+  doc: TextDocument,
+  uri: string,
+  content: string,
+  cursor: number,
+) {
+  const tokenAtCursor = getTokenAtOffset(content, cursor);
+  if (!tokenAtCursor?.token)
+    return null;
+
+  const token = tokenAtCursor.token;
+  const attrKey = searchAttrKey(content, cursor) || undefined;
+
+  let query = token;
+  let variantsPrefix = "";
+
+  if (attrKey) {
+    const parts = token.split(":");
+    const base = parts[parts.length - 1];
+    variantsPrefix = parts.slice(0, -1).join(":");
+    query = variantsPrefix
+      ? `${variantsPrefix}:${attrKey}-${base}`
+      : `${attrKey}-${base}`;
+  }
+
+  return context.autocomplete
+    .suggest(query, true)
+    .then((suggestions) => {
+      if (!suggestions.length)
+        return null;
+
+      const withVariantsPrefix = variantsPrefix ? `${variantsPrefix}:` : "";
+      const attributifyPrefix = attrKey ? `${withVariantsPrefix}${attrKey}-` : "";
+
+      return suggestions
+        .slice(0, settings.autocompleteMaxItems)
+        .map((value, i) => {
+          const replacement = attrKey && value.startsWith(attributifyPrefix)
+            ? `${withVariantsPrefix}${value.slice(attributifyPrefix.length)}`
+            : value;
+
+          return {
+            label: replacement,
+            kind: CompletionItemKind.Constant,
+            data: { i, value: replacement, uri },
+            filterText: replacement,
+            textEdit: {
+              newText: replacement,
+              range: Range.create(
+                doc.positionAt(tokenAtCursor.start),
+                doc.positionAt(tokenAtCursor.end),
+              ),
+            },
+          };
+        });
+    })
+    .catch(() => null);
 }
 
 function isReferenceCandidateFile(filePath: string) {
@@ -233,7 +317,16 @@ function refreshSettings(unocssSettings: Record<string, any> | undefined) {
       unocssSettings?.autocompleteMaxItems ??
       defaultSettings.autocompleteMaxItems,
   };
-  setAutocompleteMatchType(settings.autocompleteMatchType);
+
+  contextManager?.setAutocompleteMatchType(settings.autocompleteMatchType);
+}
+
+function getGeneratorCache(uno: UnoGenerator) {
+  // @ts-expect-error `_cache` was used by older Uno versions.
+  return (uno.cache || uno._cache || new Map()) as Map<
+    string,
+    Array<[unknown, unknown, unknown]> | null
+  >;
 }
 
 connection.onInitialize((params: InitializeParams) => {
@@ -247,7 +340,7 @@ connection.onInitialize((params: InitializeParams) => {
       textDocumentSync: TextDocumentSyncKind.Incremental,
       completionProvider: {
         resolveProvider: true,
-        triggerCharacters: ["-", ":", " ", '"', "'"],
+        triggerCharacters: completionTriggerCharacters,
       },
       hoverProvider: true,
       documentHighlightProvider: false,
@@ -273,15 +366,19 @@ connection.onInitialize((params: InitializeParams) => {
   }
 
   if (workspaceRoot) {
-    void resolveConfig(uriToPath(workspaceRoot)).catch((error: unknown) => {
-      connection.console.error(`unocss: failed to load config ${String(error)}`);
-    });
+    contextManager = new ContextManager(
+      uriToPath(workspaceRoot),
+      connection,
+      settings.autocompleteMatchType,
+    );
   }
 
   return result;
 });
 
-connection.onInitialized(() => {
+connection.onInitialized(async () => {
+  if (contextManager)
+    await contextManager.ready;
   connection.console.log("unocss: language server initialized");
 });
 
@@ -289,10 +386,17 @@ connection.onDidChangeConfiguration((change) => {
   refreshSettings(change.settings?.unocss);
 });
 
+connection.onDidChangeWatchedFiles((event) => {
+  if (!event.changes.some((change) => configFileRE.test(uriToPath(change.uri))))
+    return;
+  void throttledReloadConfig();
+});
+
 connection.onRequest("unocss/reloadConfig", async () => {
-  if (!workspaceRoot) return { success: false };
+  if (!contextManager) return { success: false };
   try {
-    await resolveConfig(uriToPath(workspaceRoot));
+    clearAllCache();
+    await contextManager.reload();
     return { success: true };
   } catch {
     return { success: false };
@@ -314,21 +418,35 @@ connection.onCompletion(async (params): Promise<CompletionItem[]> => {
     return [];
   }
 
+  const context = await contextManager?.resolveClosestContext(content, id);
+  if (!context) return [];
+
+  const fastItems = await buildTokenCompletionItems(
+    context,
+    doc,
+    params.textDocument.uri,
+    content,
+    cursor,
+  );
+  if (fastItems?.length)
+    return fastItems;
+
   let result: SuggestResult | undefined;
   try {
-    result = await getComplete(content, cursor);
+    result = await context.autocomplete.suggestInFile(content, cursor);
   } catch (error: unknown) {
     connection.console.error(`unocss: completion failed ${String(error)}`);
   }
 
-  if (!result) return [];
+  if (!result || !result.suggestions.length)
+    return [];
 
   return result.suggestions.slice(0, settings.autocompleteMaxItems).map(([value, label], i) => {
     const resolved = result.resolveReplacement(value);
     return {
       label,
       kind: CompletionItemKind.Constant,
-      data: { i, value },
+      data: { i, value, uri: params.textDocument.uri },
       filterText: value,
       textEdit: {
         newText: resolved.replacement,
@@ -343,14 +461,26 @@ connection.onCompletion(async (params): Promise<CompletionItem[]> => {
 
 connection.onCompletionResolve(
   async (item: CompletionItem): Promise<CompletionItem> => {
-    const value =
-      item.data && typeof item.data === "object" && "value" in item.data
-        ? String(item.data.value)
-        : String(item.label);
-    const token = getTokenForUtility(value);
+    if (!(item.data && typeof item.data === "object" && "uri" in item.data && "value" in item.data))
+      return item;
+
+    const uri = String(item.data.uri);
+    const value = String(item.data.value);
+    const doc = documents.get(uri);
+    if (!doc) return item;
+
+    const id = uriToPath(uri);
+    const content = doc.getText();
+    const context = await contextManager?.resolveClosestContext(content, id);
+    if (!context) return item;
+
+    const token = getTokenForUtility(context, value);
     const ratio = getRemToPxRatio();
-    const cssResult = await resolveCSSByToken(token);
-    const prettied = await resolvePrettiedCSSByToken(token, ratio);
+    const cssResult = await context.generator.generate(token, {
+      preflights: false,
+      safelist: false,
+    });
+    const prettied = await getPrettiedCSS(context.generator, token, ratio);
 
     const color = getColorString(cssResult.css);
     if (color) {
@@ -361,7 +491,7 @@ connection.onCompletionResolve(
       )}, ${Math.round(color.blue * 255)}, ${color.alpha})`;
     } else {
       item.documentation = {
-        value: await resolvePrettiedMarkdownByToken(token, ratio),
+        value: await getPrettiedMarkdown(context.generator, token, ratio),
         kind: MarkupKind.Markdown,
       };
     }
@@ -376,15 +506,26 @@ connection.onHover(async (params): Promise<Hover | null> => {
 
   const uri = params.textDocument.uri;
   const id = uriToPath(uri);
+  if (!contextManager?.isTarget(id))
+    return null;
+
   const content = doc.getText();
   const cursor = doc.offsetAt(params.position);
-  const positions = await getMatchedPositions(content, id, getMatchedOptions());
+  const context = await contextManager.resolveClosestContext(content, id);
+  if (!context) return null;
+
+  const positions = await getMatchedPositionsFromDoc(
+    context.generator,
+    content,
+    id,
+    settings.strictAnnotationMatch,
+  );
   const matched = positions.find(([start, end]) => cursor >= start && cursor <= end);
   const ratio = getRemToPxRatio();
 
   if (matched) {
-    const token = getTokenForUtility(matched[2]);
-    const markdown = await resolvePrettiedMarkdownByToken(token, ratio);
+    const token = getTokenForUtility(context, matched[2]);
+    const markdown = await getPrettiedMarkdown(context.generator, token, ratio);
     if (!markdown) return null;
 
     return {
@@ -398,8 +539,8 @@ connection.onHover(async (params): Promise<Hover | null> => {
 
   const tokenAtCursor = getTokenAtOffset(content, cursor);
   if (tokenAtCursor) {
-    const token = getTokenForUtility(tokenAtCursor.token);
-    const markdown = await resolvePrettiedMarkdownByToken(token, ratio);
+    const token = getTokenForUtility(context, tokenAtCursor.token);
+    const markdown = await getPrettiedMarkdown(context.generator, token, ratio);
     if (markdown) {
       return {
         contents: markdown,
@@ -411,7 +552,11 @@ connection.onHover(async (params): Promise<Hover | null> => {
     }
   }
 
-  const markdown = await resolvePrettiedMarkdownByOffset(content, cursor, ratio);
+  const boundary = searchUsageBoundary(content, cursor);
+  if (!boundary?.content)
+    return null;
+
+  const markdown = await getPrettiedMarkdown(context.generator, boundary.content, ratio);
   if (!markdown) return null;
 
   return {
@@ -430,14 +575,45 @@ connection.onDocumentColor(async (params) => {
   const code = doc.getText();
   if (!code) return [];
 
-  const colors = await documentColor(code, id, getMatchedOptions());
-  return colors.map((c) => ({
-    color: c.color,
-    range: {
-      start: doc.positionAt(c.range.start),
-      end: doc.positionAt(c.range.end),
-    },
-  }));
+  const context = await contextManager?.resolveClosestContext(code, id);
+  if (!context)
+    return [];
+
+  const positions = await getMatchedPositionsFromDoc(
+    context.generator,
+    code,
+    id,
+    settings.strictAnnotationMatch,
+  );
+  const matched = await Promise.all(
+    positions.map(async ([start, end, text]) => {
+      const token = getTokenForUtility(context, text);
+      const css = (
+        await context.generator.generate(token, {
+          preflights: false,
+          safelist: false,
+        })
+      ).css;
+
+      const color = getColorString(css);
+      if (!color) return;
+
+      return {
+        range: { start, end },
+        color,
+      };
+    }),
+  );
+
+  return matched
+    .filter((item) => item !== undefined)
+    .map((c) => ({
+      color: c.color,
+      range: {
+        start: doc.positionAt(c.range.start),
+        end: doc.positionAt(c.range.end),
+      },
+    }));
 });
 
 connection.onColorPresentation((params) => {
@@ -454,14 +630,23 @@ connection.onReferences(async (params: ReferenceParams): Promise<Location[] | nu
 
   const id = uriToPath(params.textDocument.uri);
   const code = doc.getText();
-  const positions = await getMatchedPositions(code, id, getMatchedOptions());
+  const context = await contextManager?.resolveClosestContext(code, id);
+  if (!context)
+    return null;
+
+  const positions = await getMatchedPositionsFromDoc(
+    context.generator,
+    code,
+    id,
+    settings.strictAnnotationMatch,
+  );
   const offset = doc.offsetAt(params.position);
   const matched = positions.find(([start, end]) => start <= offset && end >= offset);
 
   if (!matched || !matched[2]) return null;
   const targetName = matched[2];
 
-  const cacheMap = getGeneratorCache();
+  const cacheMap = getGeneratorCache(context.generator);
   const target = cacheMap.get(targetName) || null;
   const names = new Set([targetName]);
 
@@ -489,19 +674,27 @@ connection.onReferences(async (params: ReferenceParams): Promise<Location[] | nu
     if (!fileContent)
       continue;
 
-    const filePositions = await getMatchedPositions(
+    const fileUri = pathToFileURL(filePath).toString();
+    const openDoc = documents.get(fileUri);
+    const fileContext = filePath === id
+      ? context
+      : await contextManager?.resolveClosestContext(fileContent, filePath);
+    if (!fileContext)
+      continue;
+
+    const filePositions = await getMatchedPositionsFromDoc(
+      fileContext.generator,
       fileContent,
       filePath,
-      getMatchedOptions(),
+      settings.strictAnnotationMatch,
+      !openDoc,
     );
 
     if (!filePositions.length)
       continue;
 
-    const fileUri = pathToFileURL(filePath).toString();
-    const fileDoc = documents.get(fileUri);
     const textDoc =
-      fileDoc || TextDocument.create(fileUri, "", 0, fileContent);
+      openDoc || TextDocument.create(fileUri, "", 0, fileContent);
 
     for (const [start, end, text] of filePositions) {
       if (!names.has(text))
@@ -518,6 +711,14 @@ connection.onReferences(async (params: ReferenceParams): Promise<Location[] | nu
   }
 
   return locations;
+});
+
+documents.onDidChangeContent((change) => {
+  clearDocumentCache(uriToPath(change.document.uri));
+});
+
+documents.onDidClose((event) => {
+  clearDocumentCache(uriToPath(event.document.uri));
 });
 
 documents.listen(connection);
