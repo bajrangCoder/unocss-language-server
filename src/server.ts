@@ -6,6 +6,7 @@ import type { SuggestResult, UnoGenerator } from "@unocss/core";
 import {
   type CompletionItem,
   CompletionItemKind,
+  InsertTextFormat,
   createConnection,
   type Hover,
   type InitializeParams,
@@ -25,6 +26,7 @@ import {
   getMatchedPositionsFromDoc,
 } from "./cache.js";
 import { ContextManager, type UnoContext } from "./context.js";
+import { getDynamicRuleCompletionCandidates } from "./dynamic-rule-completion.js";
 import {
   getAttributifyCandidates,
   getColorString,
@@ -237,6 +239,40 @@ function buildTokenCompletionItems(
     .catch(() => null);
 }
 
+function buildDynamicRuleFallbackItems(
+  context: UnoContext,
+  doc: TextDocument,
+  uri: string,
+  content: string,
+  cursor: number,
+) {
+  const tokenAtCursor = getTokenAtOffset(content, cursor);
+  if (!tokenAtCursor?.token)
+    return null;
+
+  const suggestions = getDynamicRuleCompletionCandidates(
+    context.generator,
+    tokenAtCursor.token,
+  );
+  if (!suggestions.length)
+    return null;
+
+  return suggestions.map((suggestion, i) => ({
+    label: suggestion.label,
+    kind: CompletionItemKind.Snippet,
+    data: { i, value: suggestion.label, uri },
+    filterText: suggestion.label,
+    insertTextFormat: suggestion.isSnippet ? InsertTextFormat.Snippet : undefined,
+    textEdit: {
+      newText: suggestion.insertText,
+      range: Range.create(
+        doc.positionAt(tokenAtCursor.start),
+        doc.positionAt(tokenAtCursor.end),
+      ),
+    },
+  }));
+}
+
 function isReferenceCandidateFile(filePath: string) {
   return workspaceFileExtensions.has(path.extname(filePath).toLowerCase());
 }
@@ -439,7 +475,13 @@ connection.onCompletion(async (params): Promise<CompletionItem[]> => {
   }
 
   if (!result || !result.suggestions.length)
-    return [];
+    return buildDynamicRuleFallbackItems(
+      context,
+      doc,
+      params.textDocument.uri,
+      content,
+      cursor,
+    ) || [];
 
   return result.suggestions.slice(0, settings.autocompleteMaxItems).map(([value, label], i) => {
     const resolved = result.resolveReplacement(value);

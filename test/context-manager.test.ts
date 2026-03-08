@@ -83,4 +83,40 @@ export default {
     expect(appMarkdown).toContain("background-color");
     expect(appOnRootMarkdown).toBe("");
   });
+
+  it("falls back to the nearest working context when a nested config fails to load", async () => {
+    const brokenAppDir = path.join(rootDir, "packages", "broken-app");
+    await mkdir(brokenAppDir, { recursive: true });
+    await writeFile(
+      path.join(brokenAppDir, "uno.config.mjs"),
+      `
+import missingPreset from "missing-preset";
+
+export default {
+  presets: [missingPreset()],
+};
+`.trimStart(),
+      "utf8",
+    );
+
+    const manager = new ContextManager(
+      rootDir,
+      { console: { log() {}, error() {} } } as any,
+    );
+    await manager.ready;
+
+    const brokenFile = path.join(brokenAppDir, "src", "index.html");
+    const context = await manager.resolveClosestContext("", brokenFile);
+
+    expect(context).toBeTruthy();
+    expect(context?.configDir).toBe(rootDir);
+
+    const markdown = await getPrettiedMarkdown(
+      context!.generator,
+      "site-shortcut",
+      16,
+    );
+
+    expect(markdown).toContain("background-color");
+  });
 });

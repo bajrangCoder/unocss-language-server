@@ -55,6 +55,10 @@ export class ContextManager {
     this.connection.console.log(message);
   }
 
+  private warn(message: string) {
+    this.connection.console.error(message);
+  }
+
   isTarget(id: string) {
     const contextDirs = Array.from(this.contextsMap.keys());
     if (!contextDirs.length)
@@ -108,54 +112,78 @@ export class ContextManager {
   }
 
   private async loadContext(dir: string, allowDefault: boolean) {
-    const result = await loadConfig(dir, dir, [
-      sourcePluginFactory({
-        files: ["vite.config", "svelte.config", "iles.config"],
-        targetModule: "unocss/vite",
-        parameters: [{ command: "serve", mode: "development" }],
-      }),
-      sourcePluginFactory({
-        files: ["astro.config"],
-        targetModule: "unocss/astro",
-      }),
-      sourceObjectFields({
-        files: "nuxt.config",
-        fields: "unocss",
-      }),
-    ]);
+    try {
+      const result = await loadConfig(dir, dir, [
+        sourcePluginFactory({
+          files: ["vite.config", "svelte.config", "iles.config"],
+          targetModule: "unocss/vite",
+          parameters: [{ command: "serve", mode: "development" }],
+        }),
+        sourcePluginFactory({
+          files: ["astro.config"],
+          targetModule: "unocss/astro",
+        }),
+        sourceObjectFields({
+          files: "nuxt.config",
+          fields: "unocss",
+        }),
+      ]);
 
-    if (!result?.config && !allowDefault) {
-      this.contextsMap.set(dir, null);
-      return null;
-    }
+      if (!result?.config && !allowDefault) {
+        this.contextsMap.set(dir, null);
+        return null;
+      }
 
-    const generator = await createGenerator({}, this.defaultConfig);
-    await generator.setConfig(result?.config || {}, this.defaultConfig);
-    const autocomplete = createAutocomplete(generator, {
-      matchType: this.autocompleteMatchType,
-      throwErrors: false,
-    });
+      const generator = await createGenerator({}, this.defaultConfig);
+      await generator.setConfig(result?.config || {}, this.defaultConfig);
+      const autocomplete = createAutocomplete(generator, {
+        matchType: this.autocompleteMatchType,
+        throwErrors: false,
+      });
 
-    const context: UnoContext = {
-      configDir: dir,
-      generator,
-      autocomplete,
-      configSources: result?.sources || [],
-    };
-    this.contextsMap.set(dir, context);
+      const context: UnoContext = {
+        configDir: dir,
+        generator,
+        autocomplete,
+        configSources: result?.sources || [],
+      };
+      this.contextsMap.set(dir, context);
 
-    if (result?.sources?.length) {
-      this.configSources = Array.from(
-        new Set([...this.configSources, ...result.sources]),
-      );
-      this.log(
-        `unocss: loaded config from ${result.sources.join(", ")}`,
-      );
-    } else if (allowDefault) {
+      if (result?.sources?.length) {
+        this.configSources = Array.from(
+          new Set([...this.configSources, ...result.sources]),
+        );
+        this.log(
+          `unocss: loaded config from ${result.sources.join(", ")}`,
+        );
+      } else if (allowDefault) {
+        this.log(`unocss: using default config in ${dir}`);
+      }
+
+      return context;
+    } catch (error: unknown) {
+      this.warn(`unocss: failed to load config in ${dir}: ${String(error)}`);
+      if (!allowDefault) {
+        this.contextsMap.set(dir, null);
+        return null;
+      }
+
+      const generator = await createGenerator({}, this.defaultConfig);
+      await generator.setConfig({}, this.defaultConfig);
+      const autocomplete = createAutocomplete(generator, {
+        matchType: this.autocompleteMatchType,
+        throwErrors: false,
+      });
+      const context: UnoContext = {
+        configDir: dir,
+        generator,
+        autocomplete,
+        configSources: [],
+      };
+      this.contextsMap.set(dir, context);
       this.log(`unocss: using default config in ${dir}`);
+      return context;
     }
-
-    return context;
   }
 
   async resolveClosestContext(code: string, file: string): Promise<UnoContext | undefined> {
@@ -185,9 +213,10 @@ export class ContextManager {
       (!resolvedContext || discoveredConfigDir.length > resolvedContext.configDir.length)
     ) {
       const discovered = await this.loadContextInDirectory(discoveredConfigDir, false);
-      const discoveredContext = discovered || undefined;
-      this.fileContextCache.set(file, discoveredContext);
-      return discoveredContext;
+      if (discovered) {
+        this.fileContextCache.set(file, discovered);
+        return discovered;
+      }
     }
 
     if (resolvedContext) {
